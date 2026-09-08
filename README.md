@@ -383,10 +383,19 @@ The project includes a comprehensive reference implementation for Android that d
 *   **Hierarchical Sub-Agents**: Complex "Manager-Worker" orchestrations where agents manage their own internal sub-graphs.
 
 ### Running the Samples
-1.  **Configure API Key**: Add your OpenAI API key to `local.properties` in the root folder:
+1.  **Configure API Key(s)**: Add one or more provider keys to `local.properties` in the root folder:
     ```properties
-    open_ai_api=sk-your-key-here
+    # At least one key is required for single-model demos (Chat, Agent, Tools, …)
+    deep_seek_api_key=sk-your-deepseek-key
+    open_ai_api=sk-your-openai-key
+    gemini_api_key=your-gemini-key
+    anthropic_api_key=your-anthropic-key
+    open_router_api=your-openrouter-key
     ```
+    **Selection rules** :
+    - Single-model demos pick the first configured provider in this priority: ** OpenAI → Gemini → Anthropic → DeepSeek →OpenRouter**.
+    - Multi-model / router demos only register providers whose keys are non-blank (routing demos need ≥2 keys).
+    - Keys are baked into `BuildConfig` at build time — after editing `local.properties`, run **Gradle Sync / Rebuild** before relaunching the app.
 2.  **Android**: Open the project in Android Studio and run the `:androidApp` configuration. The **Master Screen** provides a dashboard to launch each of these specific demos.
 3.  **iOS**: To be added soon.
 

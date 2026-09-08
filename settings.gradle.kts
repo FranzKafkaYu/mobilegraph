@@ -3,6 +3,10 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {
     repositories {
+        // Prefer mirrors when Google Maven is unreachable (common in CN networks).
+        maven(url = "https://maven.aliyun.com/repository/google")
+        maven(url = "https://maven.aliyun.com/repository/central")
+        maven(url = "https://maven.aliyun.com/repository/gradle-plugin")
         google {
             mavenContent {
                 includeGroupAndSubgroups("androidx")
@@ -17,6 +21,10 @@ pluginManagement {
 
 dependencyResolutionManagement {
     repositories {
+        // Prefer mirrors when Google Maven is unreachable (common in CN networks).
+        maven(url = "https://maven.aliyun.com/repository/google")
+        maven(url = "https://maven.aliyun.com/repository/central")
+        maven(url = "https://maven.aliyun.com/repository/public")
         google {
             mavenContent {
                 includeGroupAndSubgroups("androidx")

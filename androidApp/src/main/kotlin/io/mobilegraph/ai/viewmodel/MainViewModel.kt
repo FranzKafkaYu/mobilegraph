@@ -18,7 +18,9 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.mobilegraph.ai.ApplicationLogger
-import io.mobilegraph.ai.BuildConfig
+import io.mobilegraph.ai.config.DemoChatModels
+import io.mobilegraph.ai.config.DemoModelSize
+import io.mobilegraph.ai.config.MissingApiKeyException
 import io.mobilegraph.core.context.ExecutionContext
 import io.mobilegraph.core.events.MobileGraphEvent
 import io.mobilegraph.core.facade.MobileGraph
@@ -40,7 +42,6 @@ import io.mobilegraph.models.middleware.ChatMemoryMiddleware
 import io.mobilegraph.models.middleware.LoggingMiddleware
 import io.mobilegraph.models.middleware.RetryMiddleware
 import io.mobilegraph.models.middleware.ToolSelectionMiddleware
-import io.mobilegraph.models.openai.OpenAIChatModel
 import io.mobilegraph.parsers.ParseResult
 import io.mobilegraph.parsers.asText
 import io.mobilegraph.parsers.structuredOutputParser
@@ -80,13 +81,19 @@ class MainViewModel : ViewModel() {
     var currentSequenceItem by mutableStateOf<String>("")
     val eventLog = mutableStateListOf<String>()
 
-    private val openAiApiKey = BuildConfig.OPEN_AI_API_KEY
-
     /**
      * Initializes the SDK with a professional configuration.
      */
     fun initializeSdk(context: Context) {
         if (mobileGraph != null) return // Prevent duplicate initialization
+
+        val selected =
+            try {
+                DemoChatModels.requireDefaultProvider()
+            } catch (e: MissingApiKeyException) {
+                uiState = e.message ?: "Missing API key"
+                return
+            }
 
         val filesDir = context.filesDir
         val myStore =
@@ -95,7 +102,10 @@ class MainViewModel : ViewModel() {
                 onSave = { json -> saveCacheToFile(filesDir, json) },
             )
         val embeddingModel = MediaPipeEmbeddingModel({ context })
-        val miniModel = OpenAIChatModel(apiKey = openAiApiKey, name = "gpt-4o-mini")
+        val defaultModel = DemoChatModels.createChatModel(selected, DemoModelSize.DEFAULT)
+        val miniModel = DemoChatModels.createChatModel(selected, DemoModelSize.MINI)
+        val defaultName = selected.modelName
+        val miniName = selected.miniModelName
         mobileGraph =
             MobileGraph.initialize {
                 withTools {
@@ -109,9 +119,7 @@ class MainViewModel : ViewModel() {
                         )*/
                 )
                 withModels {
-                    // Register a high-power model for complex tasks
-                    val modelGpt4o = OpenAIChatModel(apiKey = openAiApiKey, name = "gpt-4o")
-                    chat("gpt-4o", modelGpt4o) {
+                    chat(defaultName, defaultModel) {
                         isDefault = true
                         middleware {
                             +LoggingMiddleware(ApplicationLogger())
@@ -125,8 +133,7 @@ class MainViewModel : ViewModel() {
                         }
                     }
 
-                    // Register a smaller model for faster/simpler tasks
-                    chat("gpt-4o-mini", miniModel) {
+                    chat(miniName, miniModel) {
                         middleware {
                             +LoggingMiddleware()
                             +ChatMemoryMiddleware()
@@ -144,7 +151,7 @@ class MainViewModel : ViewModel() {
                 }
                 withMemory {
                     useSummaryBufferMemory(
-                        modelName = "gpt-4o-mini",
+                        modelName = miniName,
                         maxBufferMessages = 10,
                     )
                 }
@@ -152,9 +159,10 @@ class MainViewModel : ViewModel() {
 
         // Create sessions with different models to demonstrate isolation and binding
         mobileGraph?.let {
-            sessionMap["Session 1"] = it.createSession(modelName = "gpt-4o")
-            sessionMap["Session 2"] = it.createSession(modelName = "gpt-4o-mini")
+            sessionMap["Session 1"] = it.createSession(modelName = defaultName)
+            sessionMap["Session 2"] = it.createSession(modelName = miniName)
         }
+        uiState = "Ready (${selected.provider.displayName})"
 
         // Collect events from all sessions to show in UI
         sessionMap.values.forEach { session ->

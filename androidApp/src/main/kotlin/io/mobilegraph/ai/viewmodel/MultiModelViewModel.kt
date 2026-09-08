@@ -7,7 +7,9 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.mobilegraph.ai.ApplicationLogger
-import io.mobilegraph.ai.BuildConfig
+import io.mobilegraph.ai.config.DemoChatModels
+import io.mobilegraph.ai.config.DemoProviderSelector
+import io.mobilegraph.ai.config.MissingApiKeyException
 import io.mobilegraph.ai.utils.ImageResizer
 import io.mobilegraph.core.context.SimpleExecutionContext
 import io.mobilegraph.core.facade.MobileGraph
@@ -17,13 +19,7 @@ import io.mobilegraph.models.ChatPromptValue
 import io.mobilegraph.models.ContentPart
 import io.mobilegraph.models.ModelOutput
 import io.mobilegraph.models.UserMessage
-import io.mobilegraph.models.facade.claude
-import io.mobilegraph.models.facade.deepseek
-import io.mobilegraph.models.facade.gemini
-import io.mobilegraph.models.facade.huggingface
 import io.mobilegraph.models.facade.models
-import io.mobilegraph.models.facade.openai
-import io.mobilegraph.models.facade.openrouter
 import io.mobilegraph.models.facade.withModels
 import io.mobilegraph.models.middleware.LoggingMiddleware
 import io.mobilegraph.models.middleware.ToolSelectionMiddleware
@@ -38,73 +34,32 @@ class MultiModelViewModel : ViewModel() {
     var uiState by mutableStateOf("Ready")
     var isLoading by mutableStateOf(false)
     var responseText by mutableStateOf("")
-    var selectedProvider by mutableStateOf("openai")
+    var selectedProvider by mutableStateOf("")
     var selectedImageBytes by mutableStateOf<ByteArray?>(null)
-    val providers =
-        mapOf(
-            "OpenAi" to "gpt-4o-mini",
-            "Gemini" to "gemini-2.5-flash-lite",
-            "Anthropic" to "claude-3-5-sonnet-20241022",
-            "OpenRouter" to "poolside/laguna-xs-2.1:free",
-            "HuggingFace" to "meta-llama/Llama-3.2-1B-Instruct",
-            "DeepSeek" to "deepseek-chat",
-        )
+    var providers by mutableStateOf<Map<String, String>>(emptyMap())
     private var isInitialized = false
 
     fun initializeSdk(context: Context) {
         if (isInitialized) return
-        isInitialized = true
+
+        val available = DemoChatModels.availableProviders()
+        if (available.isEmpty()) {
+            uiState =
+                "No LLM API key configured. Add one of these to local.properties, then Gradle sync/rebuild: " +
+                    DemoProviderSelector.priorityOrder.joinToString(", ") { it.localPropertiesKey }
+            return
+        }
+
+        providers = available.associate { it.provider.displayName to it.modelName }
+        selectedProvider = available.first().modelName
 
         MobileGraph.initialize {
-            // Add a global tool for testing
             withTools {
                 register(WeatherTool())
             }
 
             withModels {
-                // Register multiple providers with ToolSelectionMiddleware
-                openai(apiKey = BuildConfig.OPEN_AI_API_KEY, providers["OpenAi"]!!) {
-                    isDefault = true
-                    middleware {
-                        +LoggingMiddleware(ApplicationLogger())
-                        +ToolSelectionMiddleware()
-                    }
-                }
-
-                // Add Gemini if key is available
-                gemini(apiKey = BuildConfig.GEMINI_API_KEY, name = providers["Gemini"]!!) {
-                    middleware {
-                        +LoggingMiddleware(ApplicationLogger())
-                        +ToolSelectionMiddleware()
-                    }
-                }
-
-                // Add Claude if key is available
-                claude(apiKey = BuildConfig.ANTHROPIC_API_KEY, name = providers["Anthropic"]!!) {
-                    middleware {
-                        +LoggingMiddleware(ApplicationLogger())
-                        +ToolSelectionMiddleware()
-                    }
-                }
-
-                // Add OpenRouter
-                openrouter(apiKey = BuildConfig.OPEN_ROUTER_API_KEY, name = providers["OpenRouter"]!!) {
-                    middleware {
-                        +LoggingMiddleware(ApplicationLogger())
-                        +ToolSelectionMiddleware()
-                    }
-                }
-
-                // Add HuggingFace
-                huggingface(apiKey = "YOUR_HF_TOKEN", name = providers["HuggingFace"]!!) {
-                    middleware {
-                        +LoggingMiddleware(ApplicationLogger())
-                        +ToolSelectionMiddleware()
-                    }
-                }
-
-                // Add DeepSeek
-                deepseek(apiKey = BuildConfig.DEEP_SEEK_API_KEY, name = providers.get("DeepSeek")!!) {
+                DemoChatModels.registerConfiguredProviders(this) {
                     middleware {
                         +LoggingMiddleware(ApplicationLogger())
                         +ToolSelectionMiddleware()
@@ -112,10 +67,23 @@ class MultiModelViewModel : ViewModel() {
                 }
             }
         }
+
+        isInitialized = true
+        uiState = "SDK Initialized with ${available.size} provider(s)"
     }
 
     fun runQuery(query: String) {
         viewModelScope.launch {
+            if (!isInitialized) {
+                uiState =
+                    try {
+                        DemoChatModels.requireDefaultProvider()
+                        "SDK not initialized"
+                    } catch (e: MissingApiKeyException) {
+                        e.message ?: "Missing API key"
+                    }
+                return@launch
+            }
             isLoading = true
             uiState = "Invoking $selectedProvider..."
             responseText = ""

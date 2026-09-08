@@ -9,7 +9,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import io.mobilegraph.ai.ApplicationLogger
-import io.mobilegraph.ai.BuildConfig
+import io.mobilegraph.ai.config.DemoChatModels
+import io.mobilegraph.ai.config.MissingApiKeyException
 import io.mobilegraph.core.annotations.ExperimentalMobileGraphApi
 import io.mobilegraph.core.context.SimpleExecutionContext
 import io.mobilegraph.core.events.MobileGraphEvent
@@ -22,7 +23,6 @@ import io.mobilegraph.models.facade.embedding
 import io.mobilegraph.models.facade.withModels
 import io.mobilegraph.models.mediapipe.MediaPipeEmbeddingModel
 import io.mobilegraph.models.middleware.LoggingMiddleware
-import io.mobilegraph.models.openai.OpenAIChatModel
 import io.mobilegraph.parsers.asText
 import io.mobilegraph.rag.facade.rag
 import io.mobilegraph.rag.facade.withRag
@@ -55,14 +55,20 @@ class RagRetrievalViewModel : ViewModel() {
     private val _availableDocIds = MutableStateFlow<List<String>>(emptyList())
     val availableDocIds: StateFlow<List<String>> = _availableDocIds
 
-    private val openAiApiKey = BuildConfig.OPEN_AI_API_KEY
-
     /**
      * SDK Action: MobileGraph.initialize
      * Sets up the environment with Models, VectorStores, and Retrievers.
      */
     fun initializeSdk(context: Context) {
         if (mobileGraph != null) return
+
+        val selected =
+            try {
+                DemoChatModels.requireDefaultProvider()
+            } catch (e: MissingApiKeyException) {
+                uiState = e.message ?: "Missing API key"
+                return
+            }
 
         val embeddingModel = MediaPipeEmbeddingModel({ context })
 
@@ -75,13 +81,13 @@ class RagRetrievalViewModel : ViewModel() {
 
         val vectorStore = SQLiteVectorStore(driver, embeddingModel)
         val vectorRetriever = VectorStoreRetriever(vectorStore)
-        val chatModel = OpenAIChatModel(apiKey = openAiApiKey, name = "gpt-4o")
+        val chatModel = DemoChatModels.createChatModel(selected)
 
         mobileGraph =
             MobileGraph.initialize {
                 // SDK USE: withModels DSL to register chat and embedding models
                 withModels {
-                    chat("gpt-4o", chatModel) {
+                    chat(selected.modelName, chatModel) {
                         isDefault = true
                         defaultConfig {
                             temperature = 0f
@@ -164,6 +170,10 @@ class RagRetrievalViewModel : ViewModel() {
     ) {
         viewModelScope.launch {
             if (query.isBlank()) return@launch
+            if (mobileGraph == null) {
+                uiState = missingKeyMessage()
+                return@launch
+            }
             isLoading = true
             uiState = "Searching with $retrieverName..."
             try {
@@ -205,6 +215,14 @@ class RagRetrievalViewModel : ViewModel() {
     private fun addEvent(event: String) {
         _eventLog.value = _eventLog.value + event
     }
+
+    private fun missingKeyMessage(): String =
+        try {
+            DemoChatModels.requireDefaultProvider()
+            "SDK not initialized"
+        } catch (e: MissingApiKeyException) {
+            e.message ?: "Missing API key"
+        }
 
     /**
      * Refreshes the list of available document IDs from the VectorStore.

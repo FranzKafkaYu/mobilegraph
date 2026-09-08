@@ -40,6 +40,8 @@ dependencies {
     implementation(libs.compose.uiToolingPreview)
     debugImplementation(libs.compose.uiTooling)
     implementation(libs.pdfbox.android)
+
+    testImplementation(libs.junit)
 }
 
 android {

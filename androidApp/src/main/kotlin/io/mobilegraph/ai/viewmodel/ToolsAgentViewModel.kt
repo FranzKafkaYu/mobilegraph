@@ -10,7 +10,8 @@ import io.mobilegraph.agents.Agent
 import io.mobilegraph.agents.AgentNode
 import io.mobilegraph.agents.DefaultAgentRuntime
 import io.mobilegraph.ai.ApplicationLogger
-import io.mobilegraph.ai.BuildConfig
+import io.mobilegraph.ai.config.DemoChatModels
+import io.mobilegraph.ai.config.MissingApiKeyException
 import io.mobilegraph.checkpoint.InMemoryCheckpointStore
 import io.mobilegraph.core.context.ExecutionContext
 import io.mobilegraph.core.context.SimpleExecutionContext
@@ -36,7 +37,6 @@ import io.mobilegraph.models.facade.models
 import io.mobilegraph.models.facade.withModels
 import io.mobilegraph.models.middleware.LoggingMiddleware
 import io.mobilegraph.models.middleware.ToolSelectionMiddleware
-import io.mobilegraph.models.openai.OpenAIChatModel
 import io.mobilegraph.parsers.asText
 import io.mobilegraph.state.GraphState
 import io.mobilegraph.tools.facade.withTools
@@ -75,17 +75,24 @@ class ToolsAgentViewModel : ViewModel() {
 
     fun initializeSdk(context: Context) {
         if (isInitialized) return
-        isInitialized = true
 
+        val selected =
+            try {
+                DemoChatModels.requireDefaultProvider()
+            } catch (e: MissingApiKeyException) {
+                uiState = e.message ?: "Missing API key"
+                return
+            }
+
+        val chatModel = DemoChatModels.createChatModel(selected)
         MobileGraph.initialize {
             // 1. Register a Global Tool during initialization
             withTools {
                 register(WeatherTool())
             }
 
-            val chatModel = OpenAIChatModel(apiKey = BuildConfig.OPEN_AI_API_KEY, name = "gpt-4o")
             withModels {
-                chat("gpt-4o", chatModel) {
+                chat(selected.modelName, chatModel) {
                     isDefault = true
                     middleware {
                         +LoggingMiddleware(ApplicationLogger())
@@ -118,6 +125,8 @@ class ToolsAgentViewModel : ViewModel() {
                 edge("agent", "end")
             }
 
+        isInitialized = true
+
         // Event logging
         viewModelScope.launch {
             MobileGraph.events.collect { event ->
@@ -134,6 +143,10 @@ class ToolsAgentViewModel : ViewModel() {
 
     fun runAgent(query: String) {
         viewModelScope.launch {
+            if (!isInitialized) {
+                uiState = missingKeyMessage()
+                return@launch
+            }
             isLoading = true
             uiState = "Agent is working..."
             agentResponse = ""
@@ -168,6 +181,14 @@ class ToolsAgentViewModel : ViewModel() {
     private fun addEvent(event: String) {
         _eventLog.value = _eventLog.value + event
     }
+
+    private fun missingKeyMessage(): String =
+        try {
+            DemoChatModels.requireDefaultProvider()
+            "SDK not initialized"
+        } catch (e: MissingApiKeyException) {
+            e.message ?: "Missing API key"
+        }
 }
 
 /**
