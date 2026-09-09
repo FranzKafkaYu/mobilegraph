@@ -26,12 +26,12 @@ class DemoProviderSelectorTest {
     }
 
     @Test
-    fun deepSeekAndOpenAi_prefersDeepSeek() {
+    fun deepSeekAndOpenAi_prefersOpenAi() {
         val selected =
             DemoProviderSelector.requireDefault(
                 ProviderApiKeys(deepSeek = "sk-ds", openAi = "sk-oai"),
             )
-        assertEquals(DemoProvider.DEEPSEEK, selected.provider)
+        assertEquals(DemoProvider.OPENAI, selected.provider)
     }
 
     @Test
@@ -65,7 +65,7 @@ class DemoProviderSelectorTest {
                 ),
             )
         assertEquals(
-            listOf(DemoProvider.DEEPSEEK, DemoProvider.OPENAI, DemoProvider.GEMINI),
+            listOf(DemoProvider.OPENAI, DemoProvider.GEMINI, DemoProvider.DEEPSEEK),
             available.map { it.provider },
         )
     }

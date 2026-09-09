@@ -6,9 +6,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.mobilegraph.ai.config.DemoChatModels
-import io.mobilegraph.ai.config.DemoProvider
-import io.mobilegraph.ai.config.MissingApiKeyException
+import io.mobilegraph.ai.BuildConfig
+import io.mobilegraph.core.capability.Capability
 import io.mobilegraph.core.context.SimpleExecutionContext
 import io.mobilegraph.core.facade.MobileGraph
 import io.mobilegraph.core.facade.initialize
@@ -19,7 +18,10 @@ import io.mobilegraph.models.ChatPromptValue
 import io.mobilegraph.models.ContentPart
 import io.mobilegraph.models.ModelOutput
 import io.mobilegraph.models.UserMessage
+import io.mobilegraph.models.facade.claude
+import io.mobilegraph.models.facade.gemini
 import io.mobilegraph.models.facade.models
+import io.mobilegraph.models.facade.openai
 import io.mobilegraph.models.facade.router
 import io.mobilegraph.models.facade.withModels
 import io.mobilegraph.models.routing.hasImages
@@ -41,51 +43,48 @@ class ModelRouterViewModel : ViewModel() {
 
     fun initializeSdk(context: Context) {
         if (isInitialized) return
-
-        val available = DemoChatModels.availableProviders()
-        if (available.size < 2) {
-            uiState =
-                "Model routing needs at least 2 API keys configured in local.properties " +
-                    "(currently ${available.size})."
-            return
-        }
-
-        val defaultModel = available.first().modelName
-        val visionModel =
-            available.find { it.provider == DemoProvider.OPENAI }?.modelName
-                ?: available.first().modelName
-        val longContextModel =
-            available.find { it.provider == DemoProvider.GEMINI }?.modelName
-                ?: available.getOrNull(1)?.modelName
-                ?: defaultModel
-        val preferredDefault =
-            available.find { it.provider == DemoProvider.ANTHROPIC }?.modelName
-                ?: defaultModel
+        isInitialized = true
 
         MobileGraph.initialize(context) {
             withModels {
-                DemoChatModels.registerConfiguredProviders(this)
+                // 1. Setup individual providers
+                // Model X: Supports Vision and Streaming
+                openai(
+                    apiKey = BuildConfig.OPEN_AI_API_KEY,
+                    name = "gpt-4o",
+                    capabilities = setOf(Capability.Streaming, Capability.Vision),
+                )
 
+                // Model Y: Supports Tools and Structured Output
+                openai(
+                    apiKey = BuildConfig.OPEN_AI_API_KEY,
+                    name = "gpt-4o-mini",
+                    capabilities = setOf(Capability.FunctionCalling, Capability.StructuredOutput),
+                )
+
+                // Assuming keys are provided for demo purposes
+                gemini(apiKey = BuildConfig.GEMINI_API_KEY, name = "gemini-2.5-flash-lite")
+                claude(apiKey = BuildConfig.ANTHROPIC_API_KEY, name = "claude-sonnet-4-5-20250929")
+
+                // 2. Define the Intelligent Router
                 router("smart-assistant") {
+                    // Policy 1: If input contains images, route to Model X (Vision enabled)
                     policy {
                         condition { it.hasImages }
-                        use(visionModel)
+                        use("gpt-4o")
                     }
 
-                    if (longContextModel != preferredDefault) {
-                        policy {
-                            condition { it.promptLength > 500 }
-                            use(longContextModel)
-                        }
+                    // Policy 2: If the prompt is very long, use Gemini (Large Context)
+                    policy {
+                        condition { it.promptLength > 500 }
+                        use("gemini-2.5-flash-lite")
                     }
 
-                    default(preferredDefault)
+                    // Default: Use Claude for general reasoning
+                    default("claude-sonnet-4-5-20250929")
                 }
             }
         }
-
-        isInitialized = true
-        uiState = "Router ready with ${available.size} providers"
 
         // Observe lifecycle state
         viewModelScope.launch {
@@ -101,21 +100,6 @@ class ModelRouterViewModel : ViewModel() {
         imageUrl: String? = null,
     ) {
         viewModelScope.launch {
-            if (!isInitialized) {
-                uiState =
-                    try {
-                        val available = DemoChatModels.availableProviders()
-                        if (available.size < 2) {
-                            "Model routing needs at least 2 API keys configured in local.properties " +
-                                "(currently ${available.size})."
-                        } else {
-                            "SDK not initialized"
-                        }
-                    } catch (e: MissingApiKeyException) {
-                        e.message ?: "Missing API key"
-                    }
-                return@launch
-            }
             isLoading = true
             uiState = "Routing query..."
             responseText = ""
@@ -157,6 +141,15 @@ class ModelRouterViewModel : ViewModel() {
                 uiState = "Error"
             } finally {
                 isLoading = false
+            }
+        }
+
+        // Observe lifecycle state
+        viewModelScope.launch {
+            val registry = MobileGraph.instance.getComponent(LifecycleRegistry::class)
+            registry?.currentState?.collect { state ->
+                // handle UI from here
+                lifecycleState = state.name
             }
         }
     }

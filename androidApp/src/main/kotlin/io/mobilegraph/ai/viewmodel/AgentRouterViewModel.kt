@@ -9,10 +9,7 @@ import androidx.lifecycle.viewModelScope
 import io.mobilegraph.agents.Agent
 import io.mobilegraph.agents.AgentNode
 import io.mobilegraph.agents.DefaultAgentRuntime
-import io.mobilegraph.ai.config.DemoChatModels
-import io.mobilegraph.ai.config.DemoModelSize
-import io.mobilegraph.ai.config.DemoProvider
-import io.mobilegraph.ai.config.MissingApiKeyException
+import io.mobilegraph.ai.BuildConfig
 import io.mobilegraph.checkpoint.InMemoryCheckpointStore
 import io.mobilegraph.core.context.SimpleExecutionContext
 import io.mobilegraph.core.facade.MobileGraph
@@ -28,8 +25,9 @@ import io.mobilegraph.models.ChatModel
 import io.mobilegraph.models.ModelOutput
 import io.mobilegraph.models.SystemMessage
 import io.mobilegraph.models.UserMessage
-import io.mobilegraph.models.facade.chat
+import io.mobilegraph.models.facade.claude
 import io.mobilegraph.models.facade.models
+import io.mobilegraph.models.facade.openai
 import io.mobilegraph.models.facade.router
 import io.mobilegraph.models.facade.withModels
 import io.mobilegraph.parsers.asText
@@ -46,9 +44,9 @@ import kotlin.random.Random
  * GRAPH STRUCTURE:
  *
  * [ROUTED WORKFLOW]
- *       (manager)  <-- Routed to preferred high-reasoning model
+ *       (manager)  <-- Routed to CLAUDE (High Reasoning)
  *          |
- *       (worker)   <-- Routed to preferred fast/cheap model
+ *       (worker)   <-- Routed to GPT-4O-MINI (Fast/Cheap)
  *          |
  *        (end)
  */
@@ -69,88 +67,48 @@ class AgentRouterViewModel : ViewModel() {
 
     fun initializeSdk(context: Context) {
         if (isInitialized) return
-
-        val available = DemoChatModels.availableProviders()
-        if (available.size < 2) {
-            uiState =
-                "Agent routing needs at least 2 API keys for manager and worker models " +
-                    "(currently ${available.size})."
-            return
-        }
-
-        val manager =
-            available.find { it.provider == DemoProvider.ANTHROPIC }
-                ?: available.first()
-        val worker =
-            available
-                .find { it.provider == DemoProvider.OPENAI }
-                ?.takeIf { it.provider != manager.provider }
-                ?: available.first { it.provider != manager.provider }
-
-        val managerName = manager.modelName
-        val useWorkerMini = worker.provider == DemoProvider.OPENAI
-        val workerName = if (useWorkerMini) worker.miniModelName else worker.modelName
-        val workerSize = if (useWorkerMini) DemoModelSize.MINI else DemoModelSize.DEFAULT
+        isInitialized = true
 
         MobileGraph.initialize {
             withModels {
-                chat(managerName, DemoChatModels.createChatModel(manager)) {
-                    isDefault = true
-                }
-                chat(workerName, DemoChatModels.createChatModel(worker, workerSize)) {}
+                // 1. Register individual providers
+                openai(apiKey = BuildConfig.OPEN_AI_API_KEY, name = "gpt-4o-mini")
+                claude(apiKey = BuildConfig.ANTHROPIC_API_KEY, name = "claude-sonnet-4-5-20250929")
 
-                // Setup the "Brain Router"
+                // 2. Setup the "Brain Router"
                 router("smart-brain") {
-                    // Rule: If the prompt comes from a "Manager", use the manager model
+                    // Rule: If the prompt comes from a "Manager", use Claude
                     policy {
                         condition { it.prompt.messages.any { msg -> msg is SystemMessage && msg.content.contains("Manager") } }
-                        use(managerName)
+                        use("claude-sonnet-4-5-20250929")
                     }
                     // Default for all other agents (Workers)
-                    default(workerName)
+                    default("gpt-4o-mini")
                 }
             }
         }
 
         val router = MobileGraph.instance.models.chat("smart-brain")
 
-        // Define Agents that all use the SAME router instance
-        val managerAgent = RouterManagerAgent(router)
-        val workerAgent = RouterWorkerAgent(router)
+        // 3. Define Agents that all use the SAME router instance
+        val manager = RouterManagerAgent(router)
+        val worker = RouterWorkerAgent(router)
 
-        // Build the workflow
+        // 4. Build the workflow
         workflow =
             stateGraph {
                 start("manager")
-                node(AgentNode("manager", managerAgent, agentRuntime))
-                node(AgentNode("worker", workerAgent, agentRuntime))
+                node(AgentNode("manager", manager, agentRuntime))
+                node(AgentNode("worker", worker, agentRuntime))
                 node(EndNode("end"))
 
                 edge("manager", "worker")
                 edge("worker", "end")
             }
-
-        isInitialized = true
-        uiState = "Router ready (manager=$managerName, worker=$workerName)"
     }
 
     fun runRoutedWorkflow(query: String) {
         viewModelScope.launch {
-            if (!isInitialized) {
-                uiState =
-                    try {
-                        val available = DemoChatModels.availableProviders()
-                        if (available.size < 2) {
-                            "Agent routing needs at least 2 API keys for manager and worker models " +
-                                "(currently ${available.size})."
-                        } else {
-                            "SDK not initialized"
-                        }
-                    } catch (e: MissingApiKeyException) {
-                        e.message ?: "Missing API key"
-                    }
-                return@launch
-            }
             isLoading = true
             uiState = "Executing with Routed Brains..."
             finalResult = ""
@@ -186,7 +144,7 @@ class AgentRouterViewModel : ViewModel() {
 
 /**
  * High-reasoning agent that identifies as "Manager".
- * The router will detect this and switch to the manager model.
+ * The router will detect this and switch to Claude.
  */
 class RouterManagerAgent(
     override val model: ChatModel,
@@ -207,7 +165,7 @@ class RouterManagerAgent(
 
 /**
  * Fast worker agent.
- * The router will use the default worker model.
+ * The router will use the default model (GPT-4o-mini).
  */
 class RouterWorkerAgent(
     override val model: ChatModel,
